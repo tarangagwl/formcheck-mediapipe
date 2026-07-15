@@ -36,17 +36,23 @@
   }
 
   #startOverlay {
-    position: fixed; inset: 0; z-index: 50; background: #05070a;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    position: fixed; inset: 0; z-index: 50;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
     color: #eafff2; text-align: center; padding: 24px; box-sizing: border-box;
+    pointer-events: none;
+  }
+  #startOverlay.visible {
+    display: flex;
+    background: rgba(5,7,10,0.85);
+    pointer-events: auto;
   }
   #startOverlay h1 { font-size: 22px; margin-bottom: 8px; }
   #startOverlay p { color: #9fb8ac; max-width: 380px; margin-bottom: 22px; font-size: 14px; }
-  #startBtn {
+  #retryBtn {
     background: #17c980; color: #04140b; border: none; border-radius: 999px;
     padding: 14px 30px; font-size: 16px; font-weight: 700; cursor: pointer;
   }
-  #startBtn:active { transform: scale(0.97); }
+  #retryBtn:active { transform: scale(0.97); }
   #errMsg { color: #ff8f8f; margin-top: 16px; font-size: 13px; max-width: 380px; }
 </style>
 </head>
@@ -69,9 +75,9 @@
 <div id="noPerson">No person detected — step back</div>
 
 <div id="startOverlay">
-  <h1>Squat Form Analyzer</h1>
-  <p>This uses your camera and on-device pose detection to analyze your squat form in real time. Nothing is uploaded anywhere.</p>
-  <button id="startBtn">Start Camera</button>
+  <h1>Camera access needed</h1>
+  <p id="startStatus">Could not access the camera.</p>
+  <button id="retryBtn">Retry</button>
   <div id="errMsg"></div>
 </div>
 
@@ -94,7 +100,8 @@
   const hudDebug = document.getElementById('hudDebug');
   const noPersonEl = document.getElementById('noPerson');
   const startOverlay = document.getElementById('startOverlay');
-  const startBtn = document.getElementById('startBtn');
+  const startStatus = document.getElementById('startStatus');
+  const retryBtn = document.getElementById('retryBtn');
   const errMsg = document.getElementById('errMsg');
 
   function resizeCanvas() {
@@ -473,8 +480,12 @@
   // ---------- Camera ----------
   let camera = null;
 
+  let cameraStarted = false;
   function startCamera() {
+    if (cameraStarted) return;
+    cameraStarted = true;
     errMsg.textContent = '';
+    startOverlay.classList.remove('visible');
     try {
       camera = new Camera(video, {
         onFrame: async () => {
@@ -488,16 +499,23 @@
         height: 720
       });
       camera.start().then(() => {
-        startOverlay.style.display = 'none';
+        startOverlay.classList.remove('visible');
       }).catch((err) => {
-        errMsg.textContent = 'Camera error: ' + (err && err.message ? err.message : String(err));
+        cameraStarted = false;
+        errMsg.textContent = (err && err.message) ? err.message : String(err);
+        startOverlay.classList.add('visible');
       });
     } catch (err) {
-      errMsg.textContent = 'Camera error: ' + (err && err.message ? err.message : String(err));
+      cameraStarted = false;
+      errMsg.textContent = (err && err.message) ? err.message : String(err);
+      startOverlay.classList.add('visible');
     }
   }
 
-  startBtn.addEventListener('click', startCamera);
+  retryBtn.addEventListener('click', startCamera);
+  window.addEventListener('load', startCamera);
+  // In case 'load' already fired before this script ran, start immediately too.
+  if (document.readyState === 'complete') startCamera();
 
   // ---------- postMessage every 500ms ----------
   setInterval(() => {

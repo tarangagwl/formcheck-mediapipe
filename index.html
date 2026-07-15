@@ -14,26 +14,11 @@
   video { display: none; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
-  #hud {
-    position: fixed; top: 12px; left: 12px; z-index: 20;
-    background: rgba(0,0,0,0.55); color: #eafff2;
-    border: 1px solid rgba(0,255,150,0.4); border-radius: 10px;
-    padding: 10px 14px; font-size: 14px; line-height: 1.5;
-    min-width: 190px; backdrop-filter: blur(4px);
-    pointer-events: none;
-  }
-  #hud .row { display: flex; justify-content: space-between; gap: 14px; }
-  #hud .label { color: #7fdbb0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-  #hud .val { font-weight: 600; }
-  #hud .cue { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.15); color: #ffe17f; }
-  #hud .cue.good { color: #7fffb0; }
+  /* HUD hidden — data sent via postMessage to Thunkable instead */
+  #hud { display: none !important; }
 
-  #noPerson {
-    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-    z-index: 25; color: #fff; background: rgba(160,0,0,0.55);
-    padding: 14px 22px; border-radius: 10px; font-size: 20px; font-weight: 600;
-    display: none; text-align: center; pointer-events: none;
-  }
+  /* No-person warning hidden — Thunkable handles feedback display */
+  #noPerson { display: none !important; }
 
   #startOverlay {
     position: fixed; inset: 0; z-index: 50;
@@ -43,17 +28,17 @@
   }
   #startOverlay.visible {
     display: flex;
-    background: rgba(5,7,10,0.85);
+    background: rgba(5,7,10,0.92);
     pointer-events: auto;
   }
-  #startOverlay h1 { font-size: 22px; margin-bottom: 8px; }
-  #startOverlay p { color: #9fb8ac; max-width: 380px; margin-bottom: 22px; font-size: 14px; }
+  #startOverlay h1 { font-size: 20px; margin-bottom: 8px; }
+  #startOverlay p { color: #9fb8ac; max-width: 320px; margin-bottom: 22px; font-size: 13px; }
   #retryBtn {
     background: #17c980; color: #04140b; border: none; border-radius: 999px;
     padding: 14px 30px; font-size: 16px; font-weight: 700; cursor: pointer;
   }
   #retryBtn:active { transform: scale(0.97); }
-  #errMsg { color: #ff8f8f; margin-top: 16px; font-size: 13px; max-width: 380px; }
+  #errMsg { color: #ff8f8f; margin-top: 14px; font-size: 12px; max-width: 320px; }
 </style>
 </head>
 <body>
@@ -63,25 +48,25 @@
   <canvas id="canvas"></canvas>
 </div>
 
+<!-- Hidden HUD elements kept in DOM so JS references don't break -->
 <div id="hud">
   <div class="row"><span class="label">Reps</span><span class="val" id="hudReps">0</span></div>
   <div class="row"><span class="label">Phase</span><span class="val" id="hudPhase">standing</span></div>
   <div class="cue good" id="hudCue">Get in position</div>
-  <div class="row" style="margin-top:6px; font-size:10px; color:#7fdbb0;">
-    <span id="hudDebug">--</span>
-  </div>
+  <div class="row"><span id="hudDebug">--</span></div>
 </div>
 
-<div id="noPerson">No person detected — step back</div>
+<!-- Hidden no-person warning -->
+<div id="noPerson">No person detected</div>
 
+<!-- Camera error / retry overlay -->
 <div id="startOverlay">
   <h1>Camera access needed</h1>
-  <p id="startStatus">Could not access the camera.</p>
+  <p id="startStatus">Could not access the camera. Tap Retry and allow camera access when prompted.</p>
   <button id="retryBtn">Retry</button>
   <div id="errMsg"></div>
 </div>
 
-<!-- MediaPipe Pose + utilities from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
@@ -90,7 +75,6 @@
 (function () {
   'use strict';
 
-  // ---------- DOM ----------
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
@@ -100,7 +84,6 @@
   const hudDebug = document.getElementById('hudDebug');
   const noPersonEl = document.getElementById('noPerson');
   const startOverlay = document.getElementById('startOverlay');
-  const startStatus = document.getElementById('startStatus');
   const retryBtn = document.getElementById('retryBtn');
   const errMsg = document.getElementById('errMsg');
 
@@ -111,7 +94,6 @@
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
 
-  // ---------- Landmark indices (MediaPipe BlazePose, 33 points) ----------
   const LM = {
     L_SHOULDER: 11, R_SHOULDER: 12,
     L_HIP: 23, R_HIP: 24,
@@ -122,7 +104,6 @@
   };
   const VIS_THRESHOLD = 0.6;
 
-  // ---------- Math helpers ----------
   function angleAtVertex(a, vertex, b) {
     const v1x = a.x - vertex.x, v1y = a.y - vertex.y;
     const v2x = b.x - vertex.x, v2y = b.y - vertex.y;
@@ -132,17 +113,17 @@
     cos = Math.max(-1, Math.min(1, cos));
     return Math.acos(cos) * 180 / Math.PI;
   }
+
   function angleFromVertical(from, to) {
     const vx = to.x - from.x, vy = to.y - from.y;
     const mag = Math.hypot(vx, vy);
     if (mag === 0) return 0;
-    let cos = (vy * -1) / mag; // vertical "up" reference is (0,-1)
+    let cos = (vy * -1) / mag;
     cos = Math.max(-1, Math.min(1, cos));
     return Math.acos(cos) * 180 / Math.PI;
   }
 
-  // ---------- Rep state machine ----------
-  let phase = 'standing'; // standing | descending | bottom | ascending
+  let phase = 'standing';
   let prevHipY = null;
   let standingBaselineHipY = null;
   let descentCandidateStart = null;
@@ -160,24 +141,16 @@
   let lastRepScores = null;
   let latestCue = 'Get in position';
 
-  // live (per-frame) status flags, used for the postMessage snapshot
   let liveKneeStatus = 'good';
   let liveDepthStatus = 'good';
   let liveTorsoStatus = 'good';
   let liveHeelStatus = 'good';
 
-  // Smoothed hip-Y (reduces landmark jitter feeding into phase-transition logic).
-  // Raw hipY/depthDiff are still used for actual depth/parallel scoring.
   let smoothedHipY = null;
-
-  // Which body side ('L' or 'R') we're currently reading metrics from. Sticky
-  // with hysteresis so it doesn't flip every frame when both sides are visible
-  // (front-on view); when only one side is visible (side/profile view) it
-  // locks onto that side.
   let activeSide = null;
 
-  const MIN_PHASE_MS = 500;   // minimum duration for a phase to be considered valid
-  const DEPTH_PARALLEL_BAND = 0.015; // normalized band around "at parallel"
+  const MIN_PHASE_MS = 500;
+  const DEPTH_PARALLEL_BAND = 0.015;
 
   function scoreKnee(dev) { return dev > 20 ? 1 : (dev >= 10 ? 2 : 3); }
   function scoreDepth(diff) { return diff > DEPTH_PARALLEL_BAND ? 3 : (diff >= -DEPTH_PARALLEL_BAND ? 2 : 1); }
@@ -200,7 +173,6 @@
     const average = (kneeScore + depthScore + torsoScore + heelScore) / 4;
     const verdict = average > 2.5 ? 'good' : (average >= 1.5 ? 'needs work' : 'bad');
 
-    // primary cue: lowest score; tie priority depth > knee > torso > heel
     const ordered = [
       { key: 'depth', score: depthScore },
       { key: 'knee', score: kneeScore },
@@ -231,15 +203,12 @@
     const liveHeelLift = heelBaselineY !== null ? (heelBaselineY - heelYpx) : 0;
     liveHeelStatus = liveHeelLift > 15 ? 'heels' : 'good';
 
-    // Smooth hip-Y for direction/threshold logic only (jitter reduction).
     smoothedHipY = (smoothedHipY === null) ? hipY : (smoothedHipY * 0.6 + hipY * 0.4);
 
-    // Thresholds scaled to this person's thigh length in-frame, so they adapt
-    // to camera distance instead of assuming a fixed framing.
-    const scale = Math.max(legScale, 0.03); // floor to avoid degenerate tiny scales
-    const descendEps = scale * 0.25;   // hip must drop ~25% of thigh length to register descent
-    const standEps = scale * 0.15;     // must return within ~15% of thigh length to register standing
-    const reversalEps = scale * 0.04;  // frame-to-frame reversal threshold at the bottom
+    const scale = Math.max(legScale, 0.03);
+    const descendEps = scale * 0.25;
+    const standEps = scale * 0.15;
+    const reversalEps = scale * 0.04;
 
     if (prevHipY === null) prevHipY = smoothedHipY;
 
@@ -341,8 +310,6 @@
     const leftVis = sideVisibility(lm, 'L');
     const rightVis = sideVisibility(lm, 'R');
 
-    // Sticky side selection: only switch sides if the other side is clearly
-    // more visible, so a side-on view locks in instead of flickering.
     if (activeSide === null) {
       activeSide = (leftVis >= rightVis) ? 'L' : 'R';
     } else if (activeSide === 'L' && rightVis > leftVis + 0.15) {
@@ -370,16 +337,11 @@
 
     const torsoAngle = angleFromVertical(hip, shoulder);
     const heelYpx = heel.y * canvasH;
-
-    // Reference scale (thigh length, normalized) so movement thresholds adapt
-    // to how close/far the person is from the camera instead of being fixed
-    // fractions of the whole frame.
     const legScale = dist(hip, knee);
 
     return { kneeDeviation, depthDiff, torsoAngle, heelYpx, hipY, kneeY, legScale, side: activeSide };
   }
 
-  // ---------- Drawing ----------
   function drawSkeleton(landmarks, drawW, drawH, offsetX, offsetY, statuses) {
     function toCanvas(p) { return { x: p.x * drawW + offsetX, y: p.y * drawH + offsetY }; }
 
@@ -413,16 +375,14 @@
     });
   }
 
-  // ---------- HUD ----------
   function updateHud() {
-    hudReps.textContent = String(repCount);
-    hudPhase.textContent = phase;
-    hudCue.textContent = latestCue;
-    hudCue.classList.toggle('good', latestCue === CUES.good || latestCue === 'Get in position');
+    if (hudReps) hudReps.textContent = String(repCount);
+    if (hudPhase) hudPhase.textContent = phase;
+    if (hudCue) {
+      hudCue.textContent = latestCue;
+      hudCue.classList.toggle('good', latestCue === CUES.good || latestCue === 'Get in position');
+    }
   }
-
-  // ---------- MediaPipe Pose ----------
-  let lastValidMetrics = null;
 
   const pose = new Pose({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
@@ -454,11 +414,9 @@
     const now = performance.now();
 
     if (!landmarks || landmarks.length === 0) {
-      noPersonEl.style.display = 'block';
       updateHud();
       return;
     }
-    noPersonEl.style.display = 'none';
 
     const metrics = computeMetrics(landmarks, drawH);
 
@@ -470,17 +428,15 @@
     drawSkeleton(landmarks, drawW, drawH, offsetX, offsetY, statusesForDraw);
 
     if (metrics) {
-      lastValidMetrics = metrics;
       processMetrics(metrics, now);
     }
 
     updateHud();
   });
 
-  // ---------- Camera ----------
   let camera = null;
-
   let cameraStarted = false;
+
   function startCamera() {
     if (cameraStarted) return;
     cameraStarted = true;
@@ -491,9 +447,7 @@
         onFrame: async () => {
           try {
             await pose.send({ image: video });
-          } catch (e) {
-            // swallow transient frame errors
-          }
+          } catch (e) {}
         },
         width: 1280,
         height: 720
@@ -512,12 +466,29 @@
     }
   }
 
-  retryBtn.addEventListener('click', startCamera);
+  retryBtn.addEventListener('click', function() {
+    cameraStarted = false;
+    startCamera();
+  });
   window.addEventListener('load', startCamera);
-  // In case 'load' already fired before this script ran, start immediately too.
   if (document.readyState === 'complete') startCamera();
 
-  // ---------- postMessage every 500ms ----------
+  // ---------- postMessage every 500ms — supports both React Native WebView and standard iframe ----------
+  function sendToParent(payload) {
+    const str = JSON.stringify(payload);
+    try {
+      // React Native WebView (Thunkable, Expo, etc.)
+      if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+        window.ReactNativeWebView.postMessage(str);
+        return;
+      }
+    } catch (e) {}
+    try {
+      // Standard iframe / web fallback
+      window.parent.postMessage(str, '*');
+    } catch (e) {}
+  }
+
   setInterval(() => {
     const payload = {
       repCount: repCount,
@@ -526,13 +497,10 @@
       torsoStatus: liveTorsoStatus,
       heelStatus: liveHeelStatus,
       latestCue: latestCue,
-      lastRepScores: lastRepScores
+      lastRepScores: lastRepScores,
+      phase: phase
     };
-    try {
-      window.parent.postMessage(JSON.stringify(payload), '*');
-    } catch (e) {
-      // no parent frame available; ignore
-    }
+    sendToParent(payload);
   }, 500);
 
 })();

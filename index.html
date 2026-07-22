@@ -13,13 +13,8 @@
   #stage { position: fixed; inset: 0; width: 100%; height: 100%; }
   video { display: none; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-
-  /* HUD hidden — data sent via postMessage to Thunkable instead */
   #hud { display: none !important; }
-
-  /* No-person warning hidden — Thunkable handles feedback display */
   #noPerson { display: none !important; }
-
   #startOverlay {
     position: fixed; inset: 0; z-index: 50;
     display: none; flex-direction: column; align-items: center; justify-content: center;
@@ -48,7 +43,6 @@
   <canvas id="canvas"></canvas>
 </div>
 
-<!-- Hidden HUD elements kept in DOM so JS references don't break -->
 <div id="hud">
   <div class="row"><span class="label">Reps</span><span class="val" id="hudReps">0</span></div>
   <div class="row"><span class="label">Phase</span><span class="val" id="hudPhase">standing</span></div>
@@ -56,10 +50,8 @@
   <div class="row"><span id="hudDebug">--</span></div>
 </div>
 
-<!-- Hidden no-person warning -->
 <div id="noPerson">No person detected</div>
 
-<!-- Camera error / retry overlay -->
 <div id="startOverlay">
   <h1>Camera access needed</h1>
   <p id="startStatus">Could not access the camera. Tap Retry and allow camera access when prompted.</p>
@@ -82,7 +74,6 @@
   const hudPhase = document.getElementById('hudPhase');
   const hudCue = document.getElementById('hudCue');
   const hudDebug = document.getElementById('hudDebug');
-  const noPersonEl = document.getElementById('noPerson');
   const startOverlay = document.getElementById('startOverlay');
   const retryBtn = document.getElementById('retryBtn');
   const errMsg = document.getElementById('errMsg');
@@ -104,16 +95,6 @@
   };
   const VIS_THRESHOLD = 0.6;
 
-  function angleAtVertex(a, vertex, b) {
-    const v1x = a.x - vertex.x, v1y = a.y - vertex.y;
-    const v2x = b.x - vertex.x, v2y = b.y - vertex.y;
-    const m1 = Math.hypot(v1x, v1y), m2 = Math.hypot(v2x, v2y);
-    if (m1 === 0 || m2 === 0) return null;
-    let cos = (v1x * v2x + v1y * v2y) / (m1 * m2);
-    cos = Math.max(-1, Math.min(1, cos));
-    return Math.acos(cos) * 180 / Math.PI;
-  }
-
   function angleFromVertical(from, to) {
     const vx = to.x - from.x, vy = to.y - from.y;
     const mag = Math.hypot(vx, vy);
@@ -123,6 +104,7 @@
     return Math.acos(cos) * 180 / Math.PI;
   }
 
+  // Rep state machine
   let phase = 'standing';
   let prevHipY = null;
   let standingBaselineHipY = null;
@@ -135,12 +117,14 @@
   let wentBelowParallel = false;
   let heelBaselineY = null;
 
-  let maxKneeDevRep = 0, maxTorsoRep = 0, maxDepthDiffRep = -Infinity, maxHeelLiftRep = 0;
+  // CHANGE: removed maxKneeDevRep — knee not tracked from side view
+  let maxTorsoRep = 0, maxDepthDiffRep = -Infinity, maxHeelLiftRep = 0;
 
   let repCount = 0;
   let lastRepScores = null;
   let latestCue = 'Get in position';
 
+  // CHANGE: liveKneeStatus always 'good' — not measurable from side view
   let liveKneeStatus = 'good';
   let liveDepthStatus = 'good';
   let liveTorsoStatus = 'good';
@@ -152,30 +136,31 @@
   const MIN_PHASE_MS = 500;
   const DEPTH_PARALLEL_BAND = 0.015;
 
-  function scoreKnee(dev) { return dev > 30 ? 1 : (dev >= 20 ? 2 : 3); }
+  // CHANGE: scoreKnee removed — no longer used
   function scoreDepth(diff) { return diff > DEPTH_PARALLEL_BAND ? 3 : (diff >= -DEPTH_PARALLEL_BAND ? 2 : 1); }
   function scoreTorso(ang) { return ang > 45 ? 1 : (ang >= 30 ? 2 : 3); }
   function scoreHeel(lift) { return lift > 15 ? 1 : (lift >= 5 ? 2 : 3); }
 
   const CUES = {
     depth: 'Squat lower — get hips below your knees',
-    knee: 'Keep your knees tracking over your toes',
     torso: 'Keep your chest up, lean forward less',
     heel: 'Keep your heels planted on the ground',
     good: 'Good rep!'
   };
 
   function completeRep() {
-    const kneeScore = scoreKnee(maxKneeDevRep);
+    // CHANGE: knee removed from scoring — always set to 3, not included in average
     const depthScore = scoreDepth(maxDepthDiffRep === -Infinity ? -1 : maxDepthDiffRep);
     const torsoScore = scoreTorso(maxTorsoRep);
     const heelScore = scoreHeel(maxHeelLiftRep);
-    const average = (kneeScore + depthScore + torsoScore + heelScore) / 4;
+
+    // CHANGE: average is now 3 categories only
+    const average = (depthScore + torsoScore + heelScore) / 3;
     const verdict = average > 2.5 ? 'good' : (average >= 1.5 ? 'needs work' : 'bad');
 
+    // CHANGE: knee removed from priority cue list
     const ordered = [
       { key: 'depth', score: depthScore },
-      { key: 'knee', score: kneeScore },
       { key: 'torso', score: torsoScore },
       { key: 'heel', score: heelScore }
     ];
@@ -183,7 +168,7 @@
     for (const o of ordered) if (o.score < worst.score) worst = o;
 
     lastRepScores = {
-      knee: kneeScore,
+      knee: 3,           // CHANGE: always 3 — not measured from side view
       depth: depthScore,
       torso: torsoScore,
       heel: heelScore,
@@ -195,9 +180,10 @@
   }
 
   function processMetrics(m, now) {
-    const { kneeDeviation, depthDiff, torsoAngle, heelYpx, hipY, legScale } = m;
+    const { depthDiff, torsoAngle, heelYpx, hipY, legScale } = m;
 
-    liveKneeStatus = kneeDeviation > 25 ? 'knees' : 'good';
+    // CHANGE: knee status always good — not measurable from side view
+    liveKneeStatus = 'good';
     liveTorsoStatus = torsoAngle > 45 ? 'torso' : 'good';
     liveDepthStatus = depthDiff < -0.02 ? 'depth' : 'good';
     const liveHeelLift = heelBaselineY !== null ? (heelBaselineY - heelYpx) : 0;
@@ -223,7 +209,8 @@
             descentCandidateStart = null;
             wentBelowParallel = false;
             heelBaselineY = heelYpx;
-            maxKneeDevRep = 0; maxTorsoRep = 0; maxDepthDiffRep = -Infinity; maxHeelLiftRep = 0;
+            // CHANGE: maxKneeDevRep reset removed
+            maxTorsoRep = 0; maxDepthDiffRep = -Infinity; maxHeelLiftRep = 0;
           }
         } else {
           descentCandidateStart = null;
@@ -231,7 +218,7 @@
         break;
       }
       case 'descending': {
-        maxKneeDevRep = Math.max(maxKneeDevRep, kneeDeviation);
+        // CHANGE: maxKneeDevRep tracking removed
         maxTorsoRep = Math.max(maxTorsoRep, torsoAngle);
         maxDepthDiffRep = Math.max(maxDepthDiffRep, depthDiff);
         if (heelBaselineY !== null) maxHeelLiftRep = Math.max(maxHeelLiftRep, heelBaselineY - heelYpx);
@@ -244,7 +231,7 @@
         break;
       }
       case 'bottom': {
-        maxKneeDevRep = Math.max(maxKneeDevRep, kneeDeviation);
+        // CHANGE: maxKneeDevRep tracking removed
         maxTorsoRep = Math.max(maxTorsoRep, torsoAngle);
         maxDepthDiffRep = Math.max(maxDepthDiffRep, depthDiff);
         if (heelBaselineY !== null) maxHeelLiftRep = Math.max(maxHeelLiftRep, heelBaselineY - heelYpx);
@@ -261,7 +248,7 @@
         break;
       }
       case 'ascending': {
-        maxKneeDevRep = Math.max(maxKneeDevRep, kneeDeviation);
+        // CHANGE: maxKneeDevRep tracking removed
         maxTorsoRep = Math.max(maxTorsoRep, torsoAngle);
         maxDepthDiffRep = Math.max(maxDepthDiffRep, depthDiff);
         if (heelBaselineY !== null) maxHeelLiftRep = Math.max(maxHeelLiftRep, heelBaselineY - heelYpx);
@@ -327,19 +314,15 @@
     const heel = lm[activeSide === 'L' ? LM.L_HEEL : LM.R_HEEL];
     const shoulder = lm[activeSide === 'L' ? LM.L_SHOULDER : LM.R_SHOULDER];
 
-    const dev = angleAtVertex(hip, knee, ankle);
-    if (dev === null) return null;
-    const kneeDeviation = Math.abs(180 - dev);
-
     const hipY = hip.y;
     const kneeY = knee.y;
     const depthDiff = hipY - kneeY;
-
     const torsoAngle = angleFromVertical(hip, shoulder);
     const heelYpx = heel.y * canvasH;
     const legScale = dist(hip, knee);
 
-    return { kneeDeviation, depthDiff, torsoAngle, heelYpx, hipY, kneeY, legScale, side: activeSide };
+    // CHANGE: kneeDeviation removed from return — not used
+    return { depthDiff, torsoAngle, heelYpx, hipY, kneeY, legScale, side: activeSide };
   }
 
   function drawSkeleton(landmarks, drawW, drawH, offsetX, offsetY, statuses) {
@@ -360,10 +343,15 @@
       }
     }
 
+    // CHANGE: knee flagging removed from flagged set — knee joints never highlighted red
     const flagged = new Set();
-    if (statuses.knee === 'knees') { flagged.add(LM.L_KNEE); flagged.add(LM.R_KNEE); }
-    if (statuses.torso === 'torso') { flagged.add(LM.L_SHOULDER); flagged.add(LM.R_SHOULDER); flagged.add(LM.L_HIP); flagged.add(LM.R_HIP); }
-    if (statuses.heel === 'heels') { flagged.add(LM.L_HEEL); flagged.add(LM.R_HEEL); }
+    if (statuses.torso === 'torso') {
+      flagged.add(LM.L_SHOULDER); flagged.add(LM.R_SHOULDER);
+      flagged.add(LM.L_HIP); flagged.add(LM.R_HIP);
+    }
+    if (statuses.heel === 'heels') {
+      flagged.add(LM.L_HEEL); flagged.add(LM.R_HEEL);
+    }
 
     landmarks.forEach((p, idx) => {
       if (!p || (p.visibility || 0) < 0.5) return;
@@ -420,8 +408,9 @@
 
     const metrics = computeMetrics(landmarks, drawH);
 
+    // CHANGE: knee always 'good' in draw statuses
     const statusesForDraw = {
-      knee: metrics ? (metrics.kneeDeviation > 15 ? 'knees' : 'good') : 'good',
+      knee: 'good',
       torso: metrics ? (metrics.torsoAngle > 45 ? 'torso' : 'good') : 'good',
       heel: liveHeelStatus
     };
@@ -445,9 +434,7 @@
     try {
       camera = new Camera(video, {
         onFrame: async () => {
-          try {
-            await pose.send({ image: video });
-          } catch (e) {}
+          try { await pose.send({ image: video }); } catch (e) {}
         },
         width: 1280,
         height: 720
@@ -473,34 +460,28 @@
   window.addEventListener('load', startCamera);
   if (document.readyState === 'complete') startCamera();
 
-  // ---------- postMessage every 500ms — supports both React Native WebView and standard iframe ----------
   function sendToParent(payload) {
     const str = JSON.stringify(payload);
     try {
-      // React Native WebView (Thunkable, Expo, etc.)
       if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
         window.ReactNativeWebView.postMessage(str);
         return;
       }
     } catch (e) {}
-    try {
-      // Standard iframe / web fallback
-      window.parent.postMessage(str, '*');
-    } catch (e) {}
+    try { window.parent.postMessage(str, '*'); } catch (e) {}
   }
 
   setInterval(() => {
-    const payload = {
+    sendToParent({
       repCount: repCount,
-      kneeStatus: liveKneeStatus,
+      kneeStatus: 'good',       // CHANGE: always good — not measured from side view
       depthStatus: liveDepthStatus,
       torsoStatus: liveTorsoStatus,
       heelStatus: liveHeelStatus,
       latestCue: latestCue,
       lastRepScores: lastRepScores,
       phase: phase
-    };
-    sendToParent(payload);
+    });
   }, 500);
 
 })();

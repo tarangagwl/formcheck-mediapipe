@@ -152,7 +152,7 @@
   const MIN_PHASE_MS = 500;
   const DEPTH_PARALLEL_BAND = 0.015;
 
-  function scoreKnee(dev) { return dev > 20 ? 1 : (dev >= 10 ? 2 : 3); }
+  function scoreKnee(dev) { return dev > 30 ? 1 : (dev >= 20 ? 2 : 3); }
   function scoreDepth(diff) { return diff > DEPTH_PARALLEL_BAND ? 3 : (diff >= -DEPTH_PARALLEL_BAND ? 2 : 1); }
   function scoreTorso(ang) { return ang > 45 ? 1 : (ang >= 30 ? 2 : 3); }
   function scoreHeel(lift) { return lift > 15 ? 1 : (lift >= 5 ? 2 : 3); }
@@ -197,7 +197,7 @@
   function processMetrics(m, now) {
     const { kneeDeviation, depthDiff, torsoAngle, heelYpx, hipY, legScale } = m;
 
-    liveKneeStatus = kneeDeviation > 15 ? 'knees' : 'good';
+    liveKneeStatus = kneeDeviation > 25 ? 'knees' : 'good';
     liveTorsoStatus = torsoAngle > 45 ? 'torso' : 'good';
     liveDepthStatus = depthDiff < -0.02 ? 'depth' : 'good';
     const liveHeelLift = heelBaselineY !== null ? (heelBaselineY - heelYpx) : 0;
